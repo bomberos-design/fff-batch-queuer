@@ -114,14 +114,64 @@ Use `TOKEN` as `x-client-token` in API calls.
 
 ## Deploy
 
-### Backend (Worker)
+Connecting the Git repository in the Cloudflare dashboard gives you **two**
+separate setups: one **Worker** (backend) and one **Pages** project (frontend).
+
+### Deploy via Cloudflare dashboard (Git-connected repo)
+
+#### Backend (Workers Builds)
+
+Use **Workers** with **Workers Builds** / Git integration for the API Worker.
+
+| Setting | Value |
+| --- | --- |
+| **Root directory** | Repository root (`.`) so npm workspaces install correctly |
+| **Deploy command** | `npm run backend:deploy` (runs `wrangler deploy` under `packages/backend`) |
+
+If your build environment does not install dependencies automatically, use a command that installs from the repo root first, e.g. `npm ci && npm run backend:deploy`.
+
+Before the first successful deploy:
+
+1. **Wrangler config** — Copy [`packages/backend/wrangler.example.jsonc`](packages/backend/wrangler.example.jsonc) to `packages/backend/wrangler.jsonc` and set bindings to match your account (see below). The Worker needs this file present when `wrangler deploy` runs (commit it in a private fork, or generate it in your build step if the file is gitignored).
+2. **D1** — Create a D1 database in the dashboard, copy its **database ID** into `wrangler.jsonc` under `d1_databases[].database_id` (and align `database_name` if you rename the DB).
+3. **Schema** — Run the SQL in [`packages/backend/db/init.sql`](packages/backend/db/init.sql) against that database using the D1 **Console** tab in the dashboard (or `wrangler d1 execute … --remote --file=…` locally).
+4. **Queues** — Create **two** queues whose names match [`packages/backend/wrangler.example.jsonc`](packages/backend/wrangler.example.jsonc): `fff-bq-queue` (main) and `fff-bq-dlq` (dead-letter). The DLQ is a normal queue with that exact name; linking happens via `dead_letter_queue` in Wrangler, not in the UI.
+5. **CORS** — Set `CORS_ORIGIN` under Worker **Variables** (or in `wrangler.jsonc` → `vars`) to the browser origin(s) allowed to call the API (e.g. your Pages URL), not `"*"` in production if you can avoid it.
+
+#### Frontend (Cloudflare Pages)
+
+Create a **Pages** project linked to the **same** repo.
+
+| Setting | Value |
+| --- | --- |
+| **Root directory** | `packages/frontend` |
+| **Build command** | `npm run build` |
+| **Build output directory** | `dist` |
+
+In **Settings → Environment variables**, set at least:
+
+- **`VITE_API_BASE_URL`** — Base URL of the deployed Worker (required), e.g. `https://<worker-name>.<subdomain>.workers.dev`
+
+Optional:
+
+- **`VITE_OBSERVABILITY_TOKEN`** — Only if your backend observability routes expect this header.
+
+Without `VITE_API_BASE_URL`, the frontend falls back to `http://127.0.0.1:8999` and will fail in production.
+
+#### Security
+
+Default Worker and Pages URLs are **public on the internet**. This app uses `x-client-token` for the API, but the admin UI and Worker surface are still reachable without an extra gate. Lock down access as your threat model requires—for example **Cloudflare Zero Trust (Access)** in front of the Worker and/or Pages, or another authentication layer at the edge.
+
+---
+
+### Backend (Worker) — CLI
 
 ```bash
 cd packages/backend
 npm run deploy
 ```
 
-### Frontend app (Cloudflare Pages)
+### Frontend app (Cloudflare Pages) — CLI
 
 Build the frontend:
 
@@ -142,7 +192,7 @@ Deploy the built app:
 npx wrangler pages deploy dist --project-name fff-batch-queuer-frontend
 ```
 
-Set frontend env vars in Cloudflare Pages (**Settings -> Environment variables**)
+Set frontend env vars in Cloudflare Pages (**Settings → Environment variables**)
 before deploying:
 
 - `VITE_API_BASE_URL` (required in production), e.g.
