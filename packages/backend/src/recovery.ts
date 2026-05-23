@@ -1,17 +1,14 @@
 import { recoverStalePendingJobs, recoverStaleRunningJobs } from "./db";
+import {
+  DEFAULT_INITIAL_PENDING_MS,
+  DEFAULT_STALE_PENDING_GRACE_MS,
+  DEFAULT_STALE_RUNNING_MS,
+  ERROR_RETRY_UPPER_BOUND_MS,
+} from "./schedule";
 import type { Env } from "./types";
 
-/** Must exceed worst-case target HTTP latency; otherwise a slow response looks "stale" and we re-enqueue while the first fetch is still in flight. */
-const DEFAULT_STALE_RUNNING_MS = 300_000;
 const DEFAULT_RECOVERY_SCAN_LIMIT = 100;
 const RECOVERY_CHECK_INTERVAL_MS = 15_000;
-
-/** First queue message never arrived (e.g. send failed) or consumer never claimed the job. */
-const DEFAULT_INITIAL_PENDING_MS = 10 * 60 * 1000;
-/** Slack after the scheduled delay (`msg.retry` / success fixed delay / error backoff) before treating pending as orphaned. */
-const DEFAULT_STALE_PENDING_GRACE_MS = 15 * 60 * 1000;
-/** `backoffSeconds` is capped at 300s plus jitter; stay above that when detecting stale error retries. */
-const ERROR_RETRY_UPPER_BOUND_MS = 360 * 1000;
 
 let lastRecoveryAt = 0;
 let recoveryInFlight: Promise<void> | null = null;
@@ -34,9 +31,12 @@ function getRecoveryConfig(env: Env): {
   return { staleRunningMs, scanLimit };
 }
 
-export async function recoverOrphanedRunningJobs(env: Env): Promise<void> {
+export async function recoverOrphanedRunningJobs(
+  env: Env,
+  opts?: { force?: boolean },
+): Promise<void> {
   const now = Date.now();
-  if (now - lastRecoveryAt < RECOVERY_CHECK_INTERVAL_MS) return;
+  if (!opts?.force && now - lastRecoveryAt < RECOVERY_CHECK_INTERVAL_MS) return;
   if (recoveryInFlight) return recoveryInFlight;
 
   recoveryInFlight = (async () => {

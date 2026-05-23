@@ -1,5 +1,6 @@
 import app from "./api";
 import { processDlqMessage, processJobMessage } from "./consumer";
+import { runDailyHealthCheck } from "./healthCheck";
 import { recoverOrphanedRunningJobs } from "./recovery";
 import { QUEUE_NAMES } from "./types";
 import type { Env, JobMessage } from "./types";
@@ -8,6 +9,14 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     ctx.waitUntil(recoverOrphanedRunningJobs(env));
     return app.fetch(request, env, ctx);
+  },
+
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      runDailyHealthCheck(env).catch((err) => {
+        console.error("[health] daily check failed", err);
+      }),
+    );
   },
 
   async queue(batch: MessageBatch<JobMessage>, env: Env): Promise<void> {

@@ -74,3 +74,63 @@ export async function notifyJobFailed(
     }
   }
 }
+
+function getHealthAlertRecipients(env: Env): { from: string; to: string } | null {
+  const binding = env.SEND_EMAIL;
+  const from = (env.HEALTH_ALERT_FROM ?? env.JOB_FAILURE_ALERT_FROM)?.trim();
+  const to = (env.HEALTH_ALERT_TO ?? env.JOB_FAILURE_ALERT_TO)?.trim();
+  if (!binding || !from || !to) {
+    if (!from || !to) {
+      console.info(
+        "[email] health check alert skipped: set HEALTH_ALERT_FROM/TO or JOB_FAILURE_ALERT_FROM/TO.",
+      );
+    } else if (!binding) {
+      console.info(
+        "[email] health check alert skipped: add a send_email binding named SEND_EMAIL in wrangler.",
+      );
+    }
+    return null;
+  }
+  return { from, to };
+}
+
+/**
+ * Sends a daily digest when the scheduled health check finds job inconsistencies.
+ * No-ops unless SEND_EMAIL and alert from/to addresses are configured.
+ */
+export async function notifyHealthCheckDigest(
+  env: Env,
+  detail: {
+    checkedAtMs: number;
+    scannedJobs: number;
+    anomalyCount: number;
+    body: string;
+  },
+): Promise<void> {
+  const recipients = getHealthAlertRecipients(env);
+  if (!recipients) return;
+
+  const subject =
+    detail.anomalyCount > 0
+      ? `[fff-batch-queuer] Health check: ${detail.anomalyCount} job inconsistency(ies)`
+      : "[fff-batch-queuer] Health check: all clear";
+
+  try {
+    console.info(
+      `[email] sending health check digest anomalies=${detail.anomalyCount} from=${recipients.from} to=${recipients.to}`,
+    );
+    await env.SEND_EMAIL!.send({
+      from: recipients.from,
+      to: recipients.to,
+      subject,
+      text: detail.body,
+    });
+    console.info("[email] health check digest send finished");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error ? err.stack : undefined;
+    console.error(
+      `[email] health check digest failed: ${msg}${stack ? `\n${stack}` : ""}`,
+    );
+  }
+}

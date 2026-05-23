@@ -10,6 +10,9 @@
   "observability": {
     "enabled": true
   },
+  "triggers": {
+    "crons": ["0 8 * * *"]
+  },
   "send_email": [
     {
       "name": "SEND_EMAIL"
@@ -20,8 +23,8 @@
     // These deploy with the worker (same values appear under Settings → Variables). .dev.vars overrides locally only.
     // Omit send_email.destination_address for unrestricted sends; if set, JOB_FAILURE_ALERT_TO must match it.
     // For real delivery during wrangler dev, add "remote": true on the send_email entry (see Cloudflare email-service local-development/sending).
-    //"JOB_FAILURE_ALERT_FROM": "robot@deckserve.com",
-    //"JOB_FAILURE_ALERT_TO": "fabio.franchino@eloquentops.com"
+    //"JOB_FAILURE_ALERT_FROM": "",
+    //"JOB_FAILURE_ALERT_TO": ""
   },
   "d1_databases": [
     {

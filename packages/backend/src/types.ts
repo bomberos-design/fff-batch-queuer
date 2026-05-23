@@ -23,6 +23,20 @@ export interface Env {
   JOB_FAILURE_ALERT_FROM?: string;
   /** Inbox that receives job failure notifications. */
   JOB_FAILURE_ALERT_TO?: string;
+  /** Set to "false" to skip the daily cron health check. Default: enabled. */
+  HEALTH_CHECK_ENABLED?: string;
+  /** When "true", the daily health check also runs stale-job recovery. Default: false. */
+  HEALTH_AUTO_HEAL?: string;
+  /** When "true" (default), email only when anomalies are found. When "false", send a daily all-clear digest too. */
+  HEALTH_ALERT_ONLY_ON_ISSUES?: string;
+  /** Override sender for health digests; falls back to JOB_FAILURE_ALERT_FROM. */
+  HEALTH_ALERT_FROM?: string;
+  /** Override recipient for health digests; falls back to JOB_FAILURE_ALERT_TO. */
+  HEALTH_ALERT_TO?: string;
+  /** Grace after expected pending delivery before flagging as overdue. Default: 15 minutes. */
+  HEALTH_PENDING_GRACE_MS?: string;
+  /** Grace before flagging never-started pending jobs. Default: 10 minutes. */
+  HEALTH_INITIAL_PENDING_MS?: string;
 }
 
 export type JobStatus = "pending" | "running" | "done" | "failed" | "paused";

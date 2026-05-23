@@ -10,6 +10,10 @@
   "observability": {
     "enabled": true
   },
+  // Daily job consistency check (08:00 UTC). Logs to wrangler tail; optional email via HEALTH_ALERT_* or JOB_FAILURE_ALERT_*.
+  "triggers": {
+    "crons": ["0 8 * * *"]
+  },
   // Job failure emails — common production issues:
   // (1) Email Routing rules in the dashboard are NOT Worker env vars. Define JOB_FAILURE_ALERT_* under wrangler "vars" — they deploy with the Worker and show in the dashboard; you can also edit them there.
   // (2) JOB_FAILURE_ALERT_TO must be an Email Routing *verified destination* (the real inbox under Email Routing → Destination addresses), NOT a zone custom alias like hello@yourzone.com — Workers send rejects unverified routing aliases. If you set destination_address in wrangler, it must match that same verified address (or omit destination_address to allow any verified destination).
