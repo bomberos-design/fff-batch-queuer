@@ -25,8 +25,8 @@ One Worker, two roles:
   dead letter queue catches anything that exceeds the platform retry cap and
   flips the job to `failed`.
 
-State lives in D1 across two tables (`customers`, `jobs`). No cron, no Durable
-Objects, no Workflows.
+State lives in D1 across two tables (`customers`, `jobs`). A daily cron trigger
+runs a job consistency health check. No Durable Objects, no Workflows.
 
 ## Behaviour summary
 
@@ -55,7 +55,11 @@ Exponential backoff schedule (for errors only, no jitter): `5s, 10s, 20s, 40s,
 │   ├── backoff.ts           # exponential backoff + jitter
 │   ├── consumer.ts          # processJobMessage / processDlqMessage
 │   ├── db.ts                # D1 helpers
-│   ├── index.ts             # entry: fetch + queue handlers
+│   ├── emailAlerts.ts       # job failure + health check email digests
+│   ├── healthCheck.ts       # daily cron consistency scan
+│   ├── index.ts             # entry: fetch + queue + scheduled handlers
+│   ├── recovery.ts          # passive stale-job recovery
+│   ├── schedule.ts          # expected next-run / overdue heuristics
 │   └── types.ts             # shared types & constants
 ├── package.json
 ├── tsconfig.json
@@ -386,6 +390,57 @@ Failure alerts run in the **`queue` handler**, not in `fetch`. Use
 `cd packages/backend && npm run tail` (or `wrangler tail`) and trigger a failed
 job; look for `[email]` lines (`sending`, `send finished`, `failed`, or
 `skipped`).
+
+## Daily health check (optional)
+
+The Worker runs a **daily cron** (default **08:00 UTC**, configured in
+[`packages/backend/wrangler.example.jsonc`](packages/backend/wrangler.example.jsonc)
+under `triggers.crons`) that scans active jobs (`pending` / `running`) for
+inconsistencies:
+
+- **Stuck running** — `running` longer than `RECOVERY_STALE_RUNNING_MS` (default 5 minutes)
+- **Overdue pending** — same heuristics as passive recovery (never started, success retry overdue, error retry overdue)
+- **Duplicate active names** — more than one active job with the same `(customer, name)`
+
+Implementation: [`packages/backend/src/healthCheck.ts`](packages/backend/src/healthCheck.ts),
+invoked from the `scheduled` handler in
+[`packages/backend/src/index.ts`](packages/backend/src/index.ts).
+
+Passive recovery in [`packages/backend/src/recovery.ts`](packages/backend/src/recovery.ts)
+still runs on HTTP and queue traffic; the cron adds guaranteed daily coverage
+during quiet periods.
+
+### Email digest (optional)
+
+Health check digests reuse the same **`send_email`** binding and Cloudflare
+Email Routing prerequisites as [job failure alerts](#job-failure-email-alerts-optional).
+By default, recipients fall back to `JOB_FAILURE_ALERT_FROM` / `JOB_FAILURE_ALERT_TO`.
+
+Set these in `wrangler.jsonc` → `vars`, in the Worker dashboard under
+**Settings → Variables and Secrets**, or locally in `.dev.vars`:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HEALTH_CHECK_ENABLED` | enabled | Set to `"false"` to skip the daily scan. |
+| `HEALTH_AUTO_HEAL` | `"false"` | Set to `"true"` to also run stale-job recovery on cron. |
+| `HEALTH_ALERT_ONLY_ON_ISSUES` | `"true"` | Email only when anomalies are found. Set to `"false"` for a daily all-clear digest too. |
+| `HEALTH_ALERT_FROM` | falls back to `JOB_FAILURE_ALERT_FROM` | Envelope **From** for health digests. |
+| `HEALTH_ALERT_TO` | falls back to `JOB_FAILURE_ALERT_TO` | Envelope **To** for health digests. |
+| `HEALTH_PENDING_GRACE_MS` | 15 minutes | Extra wait after expected queue delivery before flagging overdue pending jobs. |
+| `HEALTH_INITIAL_PENDING_MS` | 10 minutes | Grace before flagging never-started pending jobs. |
+| `RECOVERY_STALE_RUNNING_MS` | 5 minutes | Threshold for stuck `running` jobs (shared with passive recovery). |
+| `RECOVERY_SCAN_LIMIT` | 100 | Max active jobs scanned per run (max 500). |
+
+If email is not configured, the check still runs and logs to `wrangler tail`
+(`[health]` lines). Look for `[email] health check alert skipped` when from/to
+addresses are missing.
+
+### Debugging the health check
+
+The cron runs in the **`scheduled` handler**, not in `fetch`. Use
+`cd packages/backend && npm run tail` and look for `[health] daily check complete`
+after the cron fires. To test locally, run `wrangler dev` and trigger the
+scheduled handler using the URL shown in the dev server output.
 
 ## Useful commands
 
