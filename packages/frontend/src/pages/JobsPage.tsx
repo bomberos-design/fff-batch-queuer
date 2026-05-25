@@ -17,7 +17,7 @@ import {
   Title,
 } from "@mantine/core";
 import { IconRefresh } from "@tabler/icons-react";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   createJob,
@@ -68,6 +68,8 @@ const JOB_STATUS_OPTIONS: Array<{ value: Job["status"]; label: string }> = [
   { value: "paused", label: "paused" },
 ];
 
+const RUNS_BATCH_SIZE = 500;
+
 export function JobsPage() {
   const DEFAULT_PAGE_SIZE = 50;
   const [searchParams, setSearchParams] = useSearchParams();
@@ -110,7 +112,9 @@ export function JobsPage() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [runsTotal, setRunsTotal] = useState<number | null>(null);
   const [runsLoading, setRunsLoading] = useState(false);
+  const [runsLoadingMore, setRunsLoadingMore] = useState(false);
   const [runsError, setRunsError] = useState<string | null>(null);
+  const runsOffsetRef = useRef(0);
 
   useEffect(() => {
     setLoading(true);
@@ -137,6 +141,8 @@ export function JobsPage() {
           setRunsTotal(null);
           setRunsError(null);
           setRunsLoading(false);
+          setRunsLoadingMore(false);
+          runsOffsetRef.current = 0;
         }
       })
       .catch((err: Error) => setError(err.message))
@@ -149,18 +155,43 @@ export function JobsPage() {
       setRunsTotal(null);
       setRunsError(null);
       setRunsLoading(false);
+      setRunsLoadingMore(false);
+      runsOffsetRef.current = 0;
       return;
     }
+    runsOffsetRef.current = 0;
     setRunsLoading(true);
     setRunsError(null);
-    fetchJobRuns(expandedJobId)
+    fetchJobRuns(expandedJobId, { limit: RUNS_BATCH_SIZE, offset: 0 })
       .then(({ runs: rows, total }) => {
         setRuns(rows);
         setRunsTotal(total);
+        runsOffsetRef.current = rows.length;
       })
       .catch((err: Error) => setRunsError(err.message))
       .finally(() => setRunsLoading(false));
   }, [expandedJobId]);
+
+  const fetchMoreRuns = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!expandedJobId || runsLoadingMore) return;
+
+    const offset = runsOffsetRef.current;
+    setRunsLoadingMore(true);
+    setRunsError(null);
+    fetchJobRuns(expandedJobId, { limit: RUNS_BATCH_SIZE, offset })
+      .then(({ runs: rows, total }) => {
+        setRuns((current) => {
+          const seen = new Set(current.map((run) => run.id));
+          const uniqueRows = rows.filter((run) => !seen.has(run.id));
+          return [...current, ...uniqueRows];
+        });
+        runsOffsetRef.current = offset + rows.length;
+        setRunsTotal(total);
+      })
+      .catch((err: Error) => setRunsError(err.message))
+      .finally(() => setRunsLoadingMore(false));
+  };
 
   const totalPages = Math.max(1, Math.ceil(totalJobs / pageSize));
 
@@ -534,7 +565,7 @@ export function JobsPage() {
                         </Table.Td>
                       </Table.Tr>
                       {isExpanded && (
-                        <Table.Tr>
+                        <Table.Tr onClick={(event) => event.stopPropagation()}>
                           <Table.Td colSpan={8}>
                             <Text size="sm" fw={600} mb="xs">
                               Runs
@@ -542,10 +573,9 @@ export function JobsPage() {
                                 ? ` (${runs.length} of ${runsTotal})`
                                 : ` (${runs.length})`}
                             </Text>
-                            {runsTotal != null && runs.length < runsTotal && (
+                            {runsTotal != null && runs.length < runsTotal && !runsLoading && (
                               <Text size="xs" c="dimmed" mb="xs">
-                                Newest runs are listed first; increase the API limit to load
-                                more than {runs.length} in one request (max 2000).
+                                Newest runs are listed first.
                               </Text>
                             )}
                             {runsLoading && <Loader size="sm" />}
@@ -589,6 +619,20 @@ export function JobsPage() {
                                 </Table>
                               </Table.ScrollContainer>
                             )}
+                            {!runsLoading &&
+                              !runsError &&
+                              runsTotal != null &&
+                              runs.length < runsTotal && (
+                                <Button
+                                  variant="light"
+                                  size="xs"
+                                  mt="xs"
+                                  loading={runsLoadingMore}
+                                  onClick={fetchMoreRuns}
+                                >
+                                  Load more
+                                </Button>
+                              )}
                           </Table.Td>
                         </Table.Tr>
                       )}

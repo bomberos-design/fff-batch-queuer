@@ -144,11 +144,16 @@ export async function deleteJob(jobId: string): Promise<{ deleted: boolean }> {
 
 export async function fetchJobRuns(
   jobId: string,
-  options?: { limit?: number },
+  options?: { limit?: number; offset?: number },
 ): Promise<{ runs: Run[]; total: number }> {
-  const limit = options?.limit ?? 2000;
+  const limit = options?.limit ?? 500;
+  const offset = options?.offset ?? 0;
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
   return request<{ runs: Run[]; total: number }>(
-    `/observability/jobs/${encodeURIComponent(jobId)}/runs?limit=${limit}`,
+    `/observability/jobs/${encodeURIComponent(jobId)}/runs?${params.toString()}`,
   );
 }
 

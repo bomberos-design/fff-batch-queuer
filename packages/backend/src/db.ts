@@ -409,18 +409,20 @@ export async function countRunsByJobId(
 export async function listRunsByJobId(
   db: D1Database,
   jobId: string,
-  limit = 2000,
+  limit = 500,
+  offset = 0,
 ): Promise<RunRow[]> {
   const safeLimit = Math.min(Math.max(limit, 1), 2000);
+  const safeOffset = Math.max(offset, 0);
   const result = await db
     .prepare(
       `SELECT *
        FROM runs
        WHERE job_id = ?
        ORDER BY run_at DESC
-       LIMIT ?`,
+       LIMIT ? OFFSET ?`,
     )
-    .bind(jobId, safeLimit)
+    .bind(jobId, safeLimit, safeOffset)
     .all<RunRow>();
   return result.results ?? [];
 }

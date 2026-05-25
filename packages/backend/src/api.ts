@@ -28,6 +28,7 @@ const JOB_STATUSES = ["pending", "running", "done", "failed", "paused"] as const
 
 const jobRunsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(2000).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
 });
 
 const createJobSchema = z.object({
@@ -633,6 +634,7 @@ app.get("/observability/jobs/:id/runs", async (c) => {
   if (!existing) return c.json({ error: "not found" }, 404);
   const parsed = jobRunsQuerySchema.safeParse({
     limit: c.req.query("limit"),
+    offset: c.req.query("offset"),
   });
   if (!parsed.success) {
     return c.json(
@@ -640,9 +642,10 @@ app.get("/observability/jobs/:id/runs", async (c) => {
       400,
     );
   }
-  const limit = parsed.data.limit ?? 2000;
+  const limit = parsed.data.limit ?? 500;
+  const offset = parsed.data.offset ?? 0;
   const [runs, total] = await Promise.all([
-    listRunsByJobId(c.env.DB, id, limit),
+    listRunsByJobId(c.env.DB, id, limit, offset),
     countRunsByJobId(c.env.DB, id),
   ]);
   return c.json({
