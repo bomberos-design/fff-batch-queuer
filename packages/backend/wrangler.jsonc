@@ -31,8 +31,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "fff-batch-queuer",
-      "database_id": "0a887fc4-535a-40ea-aef9-44a67b02fe22",
+      "database_name": "batch-queuer",
+      "database_id": "44a1c79e-cf5f-4c36-a397-b6cae1f1c9e7",
       "migrations_dir": "migrations"
     }
   ],
