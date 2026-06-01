@@ -11,12 +11,19 @@ export default {
     return app.fetch(request, env, ctx);
   },
 
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     ctx.waitUntil(
-      runDailyHealthCheck(env).catch((err) => {
-        console.error("[health] daily check failed", err);
+      recoverOrphanedRunningJobs(env, { force: true }).catch((err) => {
+        console.error("[recovery] scheduled recovery failed", err);
       }),
     );
+    if (controller.cron === "0 8 * * *") {
+      ctx.waitUntil(
+        runDailyHealthCheck(env).catch((err) => {
+          console.error("[health] daily check failed", err);
+        }),
+      );
+    }
   },
 
   async queue(batch: MessageBatch<JobMessage>, env: Env): Promise<void> {

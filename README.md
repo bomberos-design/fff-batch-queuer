@@ -479,8 +479,9 @@ invoked from the `scheduled` handler in
 [`packages/backend/src/index.ts`](packages/backend/src/index.ts).
 
 Passive recovery in [`packages/backend/src/recovery.ts`](packages/backend/src/recovery.ts)
-still runs on HTTP and queue traffic; the cron adds guaranteed daily coverage
-during quiet periods.
+runs on HTTP and queue traffic, and on a **5-minute cron** so jobs are not
+stuck until someone opens the admin UI. The daily 08:00 UTC cron adds guaranteed
+consistency reporting during quiet periods.
 
 ### Email digest (optional)
 

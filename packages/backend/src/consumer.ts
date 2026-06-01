@@ -183,6 +183,7 @@ export async function processJobMessage(
     msg.ack();
     return;
   }
+  const attemptNo = started.attempts;
 
   const outcome = await callTarget(existing);
   await insertRun(env.DB, {
@@ -193,13 +194,19 @@ export async function processJobMessage(
   });
 
   if (isStop(outcome.parsed)) {
-    await markDone(
+    const marked = await markDone(
       env.DB,
       jobId,
       customerId,
+      attemptNo,
       outcome.status as number,
       outcome.body,
     );
+    if (!marked) {
+      console.warn(
+        `[consumer] job ${jobId} attempt ${attemptNo} stale after stop response, acking`,
+      );
+    }
     msg.ack();
     return;
   }
@@ -210,8 +217,16 @@ export async function processJobMessage(
   const isError = outcome.error !== null || isHttpError || payloadHasError;
 
   if (!isError) {
-    const successState = await incrementSuccessCount(env.DB, jobId, customerId);
+    const successState = await incrementSuccessCount(
+      env.DB,
+      jobId,
+      customerId,
+      attemptNo,
+    );
     if (!successState) {
+      console.warn(
+        `[consumer] job ${jobId} attempt ${attemptNo} stale after success response, acking`,
+      );
       msg.ack();
       return;
     }
@@ -219,24 +234,38 @@ export async function processJobMessage(
       successState.successLimit !== -1 &&
       successState.successCount >= successState.successLimit;
     if (reachedSuccessLimit) {
-      await markDone(
+      const marked = await markDone(
         env.DB,
         jobId,
         customerId,
+        attemptNo,
         outcome.status as number,
         outcome.body,
       );
+      if (!marked) {
+        console.warn(
+          `[consumer] job ${jobId} attempt ${attemptNo} stale after success limit, acking`,
+        );
+      }
       msg.ack();
       return;
     }
-    await markPendingForRetry(
+    const marked = await markPendingForRetry(
       env.DB,
       jobId,
       customerId,
+      attemptNo,
       outcome.status,
       outcome.body,
       null,
     );
+    if (!marked) {
+      console.warn(
+        `[consumer] job ${jobId} attempt ${attemptNo} stale before success retry, acking`,
+      );
+      msg.ack();
+      return;
+    }
     const delaySeconds = Math.max(1, existing.success_retry_delay_seconds);
     console.log(
       `[consumer] retrying job ${jobId} attempt=${started.attempts} delaySeconds=${delaySeconds} mode=fixed reason="success iteration ${successState.successCount}/${successState.successLimit}"`,
@@ -255,8 +284,16 @@ export async function processJobMessage(
     outcome.error ??
     (isHttpError ? `HTTP ${outcome.status}` : "response payload contains error key");
 
-  const errorState = await incrementErrorAttempts(env.DB, jobId, customerId);
+  const errorState = await incrementErrorAttempts(
+    env.DB,
+    jobId,
+    customerId,
+    attemptNo,
+  );
   if (!errorState) {
+    console.warn(
+      `[consumer] job ${jobId} attempt ${attemptNo} stale after error response, acking`,
+    );
     msg.ack();
     return;
   }
@@ -264,33 +301,48 @@ export async function processJobMessage(
   const reachedErrorLimit =
     errorState.errorAttempts >= errorState.errorAttemptLimit;
   if (reachedErrorLimit) {
-    await markFailed(
+    const marked = await markFailed(
       env.DB,
       jobId,
       customerId,
       reason,
       outcome.status,
       outcome.body,
+      attemptNo,
     );
-    await notifyJobFailed(env, {
-      jobId,
-      customerId,
-      jobName: existing.name,
-      reason,
-      source: "error_limit",
-    });
+    if (marked) {
+      await notifyJobFailed(env, {
+        jobId,
+        customerId,
+        jobName: existing.name,
+        reason,
+        source: "error_limit",
+      });
+    } else {
+      console.warn(
+        `[consumer] job ${jobId} attempt ${attemptNo} stale at error limit, acking`,
+      );
+    }
     msg.ack();
     return;
   }
 
-  await markPendingForRetry(
+  const marked = await markPendingForRetry(
     env.DB,
     jobId,
     customerId,
+    attemptNo,
     outcome.status,
     outcome.body,
     reason,
   );
+  if (!marked) {
+    console.warn(
+      `[consumer] job ${jobId} attempt ${attemptNo} stale before error retry, acking`,
+    );
+    msg.ack();
+    return;
+  }
 
   const delaySeconds = backoffSeconds(errorState.errorAttempts);
 

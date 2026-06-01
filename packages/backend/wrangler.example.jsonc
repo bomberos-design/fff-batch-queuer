@@ -10,9 +10,9 @@
   "observability": {
     "enabled": true
   },
-  // Daily job consistency check (08:00 UTC). Logs to wrangler tail; optional email via HEALTH_ALERT_* or JOB_FAILURE_ALERT_*.
+  // Stale-job recovery every 5 minutes; daily consistency check at 08:00 UTC.
   "triggers": {
-    "crons": ["0 8 * * *"]
+    "crons": ["*/5 * * * *", "0 8 * * *"]
   },
   // Job failure emails — common production issues:
   // (1) Email Routing rules in the dashboard are NOT Worker env vars. Define JOB_FAILURE_ALERT_* under wrangler "vars" — they deploy with the Worker and show in the dashboard; you can also edit them there.

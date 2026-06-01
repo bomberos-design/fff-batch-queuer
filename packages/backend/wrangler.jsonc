@@ -11,7 +11,7 @@
     "enabled": true
   },
   "triggers": {
-    "crons": ["0 8 * * *"]
+    "crons": ["*/5 * * * *", "0 8 * * *"]
   },
   "send_email": [
     {
