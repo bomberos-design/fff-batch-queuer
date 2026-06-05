@@ -35,6 +35,7 @@ CREATE TABLE jobs (
   last_body                    TEXT,
   last_error                   TEXT,
   success_retry_delay_seconds  INTEGER NOT NULL DEFAULT 30,
+  next_run_at                  INTEGER,
   created_at                   INTEGER NOT NULL,
   updated_at                   INTEGER NOT NULL,
   completed_at                 INTEGER,

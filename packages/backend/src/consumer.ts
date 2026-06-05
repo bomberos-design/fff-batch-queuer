@@ -7,11 +7,26 @@ import {
   markDone,
   markFailed,
   markPendingForRetry,
+  markPendingForSuccessRetry,
   startAttempt,
 } from "./db";
+import { isQueueDeliveryDue, secondsUntilDue } from "./schedule";
 import { notifyJobFailed } from "./emailAlerts";
 import type { Env, JobMessage, JobRow } from "./types";
 import { MAX_BODY_SNAPSHOT_BYTES } from "./types";
+
+const DEFAULT_TARGET_FETCH_TIMEOUT_MS = 120_000;
+
+function parsePositiveInt(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function getTargetFetchTimeoutMs(env: Env): number {
+  return parsePositiveInt(env.TARGET_FETCH_TIMEOUT_MS) ?? DEFAULT_TARGET_FETCH_TIMEOUT_MS;
+}
 
 interface FetchOutcome {
   status: number | null;
@@ -94,17 +109,19 @@ function buildHeaders(
   return headers;
 }
 
-async function callTarget(row: JobRow): Promise<FetchOutcome> {
+async function callTarget(row: JobRow, env: Env): Promise<FetchOutcome> {
   const method = row.method.toUpperCase();
   const payload = parsePayload(row.payload);
   const userHeaders = parseHeaders(row.headers);
   const startedAt = Date.now();
+  const timeoutMs = getTargetFetchTimeoutMs(env);
 
   try {
     const res = await fetch(row.url, {
       method,
       headers: buildHeaders(method, payload, userHeaders),
       body: buildBody(method, payload),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const text = await res.text();
@@ -178,14 +195,36 @@ export async function processJobMessage(
     return;
   }
 
+  if (existing.status === "pending" && !isQueueDeliveryDue(existing, Date.now())) {
+    const delaySeconds = secondsUntilDue(existing, Date.now()) ?? 1;
+    console.log(
+      `[consumer] job ${jobId} deferred ${delaySeconds}s (duplicate or early queue delivery)`,
+    );
+    msg.retry({ delaySeconds });
+    return;
+  }
+
   const started = await startAttempt(env.DB, jobId, customerId);
   if (!started) {
+    const fresh = await getJob(env.DB, jobId, customerId);
+    if (
+      fresh &&
+      fresh.status === "pending" &&
+      !isQueueDeliveryDue(fresh, Date.now())
+    ) {
+      const delaySeconds = secondsUntilDue(fresh, Date.now()) ?? 1;
+      console.log(
+        `[consumer] job ${jobId} deferred ${delaySeconds}s after claim miss (scheduled retry)`,
+      );
+      msg.retry({ delaySeconds });
+      return;
+    }
     msg.ack();
     return;
   }
   const attemptNo = started.attempts;
 
-  const outcome = await callTarget(existing);
+  const outcome = await callTarget(existing, env);
   await insertRun(env.DB, {
     jobId,
     responseStatus: outcome.status,
@@ -250,14 +289,16 @@ export async function processJobMessage(
       msg.ack();
       return;
     }
-    const marked = await markPendingForRetry(
+    const delaySeconds = Math.max(1, existing.success_retry_delay_seconds);
+    const nextRunAtMs = Date.now() + delaySeconds * 1000;
+    const marked = await markPendingForSuccessRetry(
       env.DB,
       jobId,
       customerId,
       attemptNo,
       outcome.status,
       outcome.body,
-      null,
+      nextRunAtMs,
     );
     if (!marked) {
       console.warn(
@@ -266,7 +307,6 @@ export async function processJobMessage(
       msg.ack();
       return;
     }
-    const delaySeconds = Math.max(1, existing.success_retry_delay_seconds);
     console.log(
       `[consumer] retrying job ${jobId} attempt=${started.attempts} delaySeconds=${delaySeconds} mode=fixed reason="success iteration ${successState.successCount}/${successState.successLimit}"`,
     );

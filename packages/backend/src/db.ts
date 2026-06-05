@@ -71,6 +71,52 @@ export async function hasResumableJobWithSameName(
   return row != null;
 }
 
+export async function hasResumableJobWithSameUrl(
+  db: D1Database,
+  customerId: string,
+  url: string,
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT 1
+       FROM jobs
+       WHERE customer_id = ?
+         AND url = ?
+         AND status IN ('pending', 'running')
+       LIMIT 1`,
+    )
+    .bind(customerId, url)
+    .first<{ 1: number }>();
+  return row != null;
+}
+
+export interface DuplicateActiveUrlRow {
+  customer_id: string;
+  url: string;
+  job_count: number;
+}
+
+/** Active jobs sharing the same target URL within a customer (parallel duplication risk). */
+export async function listDuplicateActiveUrls(
+  db: D1Database,
+  limit: number,
+): Promise<DuplicateActiveUrlRow[]> {
+  const safeLimit = Math.min(Math.max(limit, 1), 500);
+  const result = await db
+    .prepare(
+      `SELECT customer_id, url, COUNT(*) AS job_count
+       FROM jobs
+       WHERE status IN ('pending', 'running')
+       GROUP BY customer_id, url
+       HAVING COUNT(*) > 1
+       ORDER BY job_count DESC
+       LIMIT ?`,
+    )
+    .bind(safeLimit)
+    .all<DuplicateActiveUrlRow>();
+  return result.results ?? [];
+}
+
 export async function getJob(
   db: D1Database,
   id: string,
@@ -449,13 +495,15 @@ export async function startAttempt(
       `UPDATE jobs
          SET attempts = attempts + 1,
              status = 'running',
-             updated_at = ?
+             updated_at = ?,
+             next_run_at = NULL
        WHERE id = ?
          AND customer_id = ?
          AND status = 'pending'
+         AND (next_run_at IS NULL OR next_run_at <= ?)
       RETURNING attempts, error_attempts, max_attempts, success_count, success_limit`,
     )
-    .bind(ts, id, customerId)
+    .bind(ts, id, customerId, ts)
     .first<{
       attempts: number;
       error_attempts: number;
@@ -650,6 +698,45 @@ export async function markPendingForRetry(
   });
 }
 
+/** Success-iteration pending with an explicit earliest retry time. */
+export async function markPendingForSuccessRetry(
+  db: D1Database,
+  id: string,
+  customerId: string,
+  attemptNo: number,
+  lastStatus: number | null,
+  lastBody: string | null,
+  nextRunAtMs: number,
+): Promise<boolean> {
+  const ts = now();
+  const result = await db
+    .prepare(
+      `UPDATE jobs
+         SET status = 'pending',
+             last_status = ?,
+             last_body = ?,
+             last_error = NULL,
+             updated_at = ?,
+             next_run_at = ?,
+             completed_at = NULL
+       WHERE id = ?
+         AND customer_id = ?
+         AND status = 'running'
+         AND attempts = ?`,
+    )
+    .bind(
+      lastStatus,
+      truncate(lastBody),
+      ts,
+      nextRunAtMs,
+      id,
+      customerId,
+      attemptNo,
+    )
+    .run();
+  return (result.meta?.changes ?? 0) > 0;
+}
+
 export interface RecoveredJobRow {
   id: string;
   customer_id: string;
@@ -672,7 +759,8 @@ export async function recoverStaleRunningJobs(
     .prepare(
       `UPDATE jobs
          SET status = 'pending',
-             updated_at = ?
+             updated_at = ?,
+             next_run_at = NULL
        WHERE id IN (
          SELECT id
          FROM jobs
@@ -718,15 +806,19 @@ export async function recoverStalePendingJobs(
   const result = await db
     .prepare(
       `UPDATE jobs
-         SET updated_at = ?
+         SET updated_at = ?,
+             next_run_at = NULL
        WHERE id IN (
          SELECT id
          FROM jobs
          WHERE status = 'pending'
            AND (
              (attempts = 0 AND updated_at <= ?)
-             OR (attempts > 0 AND last_error IS NULL
-                 AND updated_at <= ? - success_retry_delay_seconds * 1000)
+             OR (attempts > 0 AND last_error IS NULL AND (
+               (next_run_at IS NOT NULL AND next_run_at <= ?)
+               OR (next_run_at IS NULL
+                   AND updated_at <= ? - success_retry_delay_seconds * 1000)
+             ))
              OR (attempts > 0 AND last_error IS NOT NULL
                  AND updated_at <= ?)
            )
@@ -735,7 +827,7 @@ export async function recoverStalePendingJobs(
        )
       RETURNING id, customer_id`,
     )
-    .bind(ts, initialCutoff, successPathCutoff, errorPathCutoff, safeLimit)
+    .bind(ts, initialCutoff, successPathCutoff, successPathCutoff, errorPathCutoff, safeLimit)
     .all<RecoveredJobRow>();
   return result.results ?? [];
 }
