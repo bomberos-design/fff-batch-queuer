@@ -1,4 +1,8 @@
-import { recoverStalePendingJobs, recoverStaleRunningJobs } from "./db";
+import {
+  listDuplicateActiveUrls,
+  recoverStalePendingJobs,
+  recoverStaleRunningJobs,
+} from "./db";
 import {
   DEFAULT_INITIAL_PENDING_MS,
   DEFAULT_STALE_PENDING_GRACE_MS,
@@ -42,6 +46,14 @@ export async function recoverOrphanedRunningJobs(
   recoveryInFlight = (async () => {
     const { staleRunningMs, scanLimit } = getRecoveryConfig(env);
     const now = Date.now();
+    const duplicateUrls = await listDuplicateActiveUrls(env.DB, scanLimit);
+    if (duplicateUrls.length) {
+      for (const row of duplicateUrls) {
+        console.warn(
+          `[recovery] ${row.job_count} active jobs share customer=${row.customer_id} url=${row.url} — parallel target calls are likely; pause or delete duplicates`,
+        );
+      }
+    }
     const recoveredRunning = await recoverStaleRunningJobs(env.DB, staleRunningMs, scanLimit);
     if (recoveredRunning.length) {
       console.log(`[recovery] recovered ${recoveredRunning.length} stale running job(s)`);

@@ -11,6 +11,7 @@ import {
   getActiveCustomerByTokenHash,
   getJob,
   hasResumableJobWithSameName,
+  hasResumableJobWithSameUrl,
   insertJob,
   countRunsByJobId,
   listRunsByJobId,
@@ -533,16 +534,30 @@ app.post("/observability/jobs", async (c) => {
   const customer = await getCustomerById(c.env.DB, parsed.data.customerId);
   if (!customer) return c.json({ error: "customer not found" }, 404);
 
-  const hasDuplicate = await hasResumableJobWithSameName(
+  const hasDuplicateName = await hasResumableJobWithSameName(
     c.env.DB,
     parsed.data.customerId,
     parsed.data.name,
   );
-  if (hasDuplicate) {
+  if (hasDuplicateName) {
     return c.json(
       {
         error:
           "job already in queue: you cannot add more than one non-done job with the same name for this customer",
+      },
+      409,
+    );
+  }
+  const hasDuplicateUrl = await hasResumableJobWithSameUrl(
+    c.env.DB,
+    parsed.data.customerId,
+    parsed.data.url,
+  );
+  if (hasDuplicateUrl) {
+    return c.json(
+      {
+        error:
+          "job already in queue: you cannot add more than one active job targeting the same URL for this customer",
       },
       409,
     );
@@ -675,12 +690,30 @@ app.post("/jobs", async (c) => {
     );
   }
 
-  const hasDuplicate = await hasResumableJobWithSameName(c.env.DB, customer.id, parsed.data.name);
-  if (hasDuplicate) {
+  const hasDuplicateName = await hasResumableJobWithSameName(
+    c.env.DB,
+    customer.id,
+    parsed.data.name,
+  );
+  if (hasDuplicateName) {
     return c.json(
       {
         error:
           "job already in queue: you cannot add more than one non-done job with the same name for this customer",
+      },
+      409,
+    );
+  }
+  const hasDuplicateUrl = await hasResumableJobWithSameUrl(
+    c.env.DB,
+    customer.id,
+    parsed.data.url,
+  );
+  if (hasDuplicateUrl) {
+    return c.json(
+      {
+        error:
+          "job already in queue: you cannot add more than one active job targeting the same URL for this customer",
       },
       409,
     );

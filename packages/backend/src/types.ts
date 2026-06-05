@@ -22,6 +22,8 @@ export interface Env {
   RECOVERY_STALE_RUNNING_MS?: string;
   RECOVERY_SCAN_LIMIT?: string;
   RECOVERY_PENDING_BOOT_REQUEUE_LIMIT?: string;
+  /** Upper bound on outbound target fetch time in ms. Default: 120000 (2 minutes). */
+  TARGET_FETCH_TIMEOUT_MS?: string;
   /** Verified sender on your zone (Email Routing). Required with JOB_FAILURE_ALERT_TO to send failure alerts. */
   JOB_FAILURE_ALERT_FROM?: string;
   /** Inbox that receives job failure notifications. */
@@ -70,6 +72,8 @@ export interface JobRow {
   last_status: number | null;
   last_body: string | null;
   last_error: string | null;
+  /** Earliest time (ms) a pending success-iteration retry may claim the job. */
+  next_run_at: number | null;
   created_at: number;
   updated_at: number;
   completed_at: number | null;

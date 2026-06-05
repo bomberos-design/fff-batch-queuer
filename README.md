@@ -483,6 +483,19 @@ runs on HTTP and queue traffic, and on a **5-minute cron** so jobs are not
 stuck until someone opens the admin UI. The daily 08:00 UTC cron adds guaranteed
 consistency reporting during quiet periods.
 
+The main queue consumer sets **`max_concurrency: 1`** so only one target HTTP
+call runs at a time (Cloudflare Queues otherwise scales out multiple concurrent
+consumer invocations by default).
+
+Success-iteration retries record a **`next_run_at`** timestamp in D1. Queue
+messages that arrive before that time (duplicate deliveries, recovery races, or
+at-least-once redelivery) are deferred instead of calling the target immediately.
+Apply the migration after upgrading:
+
+```bash
+cd packages/backend && npm run db:migrate:remote
+```
+
 ### Email digest (optional)
 
 Health check digests reuse the same **`send_email`** binding and Cloudflare

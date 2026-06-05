@@ -26,9 +26,13 @@ type ScheduleJobFields = Pick<
   | "attempts"
   | "last_error"
   | "updated_at"
+  | "next_run_at"
   | "success_retry_delay_seconds"
   | "error_attempts"
 >;
+
+/** Clock slack before treating a queue delivery as due. */
+export const EARLY_DELIVERY_SLACK_MS = 2_000;
 
 /** Deterministic upper-bound estimate (backend adds up to 1s jitter). */
 export function estimateErrorRetryDelaySeconds(errorAttempts: number): number {
@@ -43,12 +47,32 @@ export function estimateErrorRetryDelaySeconds(errorAttempts: number): number {
 export function getExpectedNextRunAtMs(job: ScheduleJobFields): number | null {
   if (job.status !== "pending") return null;
   if (job.attempts === 0) return job.updated_at;
+  if (job.last_error == null && job.next_run_at != null) return job.next_run_at;
 
   const isErrorRetry = Boolean(job.last_error);
   const delaySeconds = isErrorRetry
     ? estimateErrorRetryDelaySeconds(job.error_attempts)
     : Math.max(1, job.success_retry_delay_seconds);
   return job.updated_at + delaySeconds * 1000;
+}
+
+export function isQueueDeliveryDue(
+  job: ScheduleJobFields,
+  nowMs: number,
+  slackMs: number = EARLY_DELIVERY_SLACK_MS,
+): boolean {
+  const expected = getExpectedNextRunAtMs(job);
+  if (expected == null) return true;
+  return nowMs + slackMs >= expected;
+}
+
+export function secondsUntilDue(
+  job: ScheduleJobFields,
+  nowMs: number,
+): number | null {
+  const expected = getExpectedNextRunAtMs(job);
+  if (expected == null) return null;
+  return Math.max(1, Math.ceil((expected - nowMs) / 1000));
 }
 
 export function isStaleRunningJob(
@@ -73,12 +97,14 @@ export function getPendingStaleKind(
   if (job.attempts === 0 && job.updated_at <= initialCutoff) {
     return "overdue_pending_initial";
   }
-  if (
-    job.attempts > 0 &&
-    job.last_error == null &&
-    job.updated_at <= successPathCutoff - job.success_retry_delay_seconds * 1000
-  ) {
-    return "overdue_pending_success_retry";
+  if (job.attempts > 0 && job.last_error == null) {
+    const overdueBySchedule =
+      job.next_run_at != null
+        ? job.next_run_at <= successPathCutoff
+        : job.updated_at <= successPathCutoff - job.success_retry_delay_seconds * 1000;
+    if (overdueBySchedule) {
+      return "overdue_pending_success_retry";
+    }
   }
   if (job.attempts > 0 && job.last_error != null && job.updated_at <= errorPathCutoff) {
     return "overdue_pending_error_retry";

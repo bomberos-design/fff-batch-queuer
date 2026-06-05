@@ -55,7 +55,8 @@
         "max_batch_size": 10,
         "max_batch_timeout": 5,
         "max_retries": 100,
-        "dead_letter_queue": "fff-bq-dlq"
+        "dead_letter_queue": "fff-bq-dlq",
+        "max_concurrency": 1
       },
       {
         "queue": "fff-bq-dlq",
