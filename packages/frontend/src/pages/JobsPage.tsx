@@ -252,6 +252,20 @@ export function JobsPage() {
     return `in ${seconds}s`;
   }
 
+  function formatRelativePast(timestamp: number): string {
+    const diffMs = Date.now() - timestamp;
+    if (diffMs <= 0) return "just now";
+    const totalSeconds = Math.floor(diffMs / 1000);
+    const days = Math.floor(totalSeconds / 86_400);
+    const hours = Math.floor((totalSeconds % 86_400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+    if (days > 0) return `${days}d ${hours}h ago`;
+    if (hours > 0) return `${hours}h ${minutes}m ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return `${totalSeconds}s ago`;
+  }
+
   function formatDuration(durationMs: number | null): string {
     if (durationMs == null) return "-";
     if (durationMs < 1000) return `${durationMs} ms`;
@@ -512,7 +526,18 @@ export function JobsPage() {
                           setExpandedJobId((current) => (current === job.id ? null : job.id))
                         }
                       >
-                        <Table.Td>{job.name}</Table.Td>
+                        <Table.Td>
+                          <Stack gap={4}>
+                            <Text size="sm">{job.name}</Text>
+                            <Text size="xs" c="dimmed">
+                              Run since {formatDate(job.createdAt)}
+                              <br />
+                              <Text span size="xs" c="dimmed">
+                                {formatRelativePast(job.createdAt)}
+                              </Text>
+                            </Text>
+                          </Stack>
+                        </Table.Td>
                         <Table.Td>{job.customerName}</Table.Td>
                         <Table.Td>
                           <Stack gap={4}>
