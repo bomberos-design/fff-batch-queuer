@@ -10,7 +10,7 @@ import {
   markPendingForSuccessRetry,
   startAttempt,
 } from "./db";
-import { isQueueDeliveryDue, secondsUntilDue } from "./schedule";
+import { getExpectedNextRunAtMs, isQueueDeliveryDue } from "./schedule";
 import { notifyJobFailed } from "./emailAlerts";
 import type { Env, JobMessage, JobRow } from "./types";
 import { MAX_BODY_SNAPSHOT_BYTES } from "./types";
@@ -196,11 +196,10 @@ export async function processJobMessage(
   }
 
   if (existing.status === "pending" && !isQueueDeliveryDue(existing, Date.now())) {
-    const delaySeconds = secondsUntilDue(existing, Date.now()) ?? 1;
     console.log(
-      `[consumer] job ${jobId} deferred ${delaySeconds}s (duplicate or early queue delivery)`,
+      `[consumer] job ${jobId} acking duplicate or early queue delivery (scheduled message will run when due)`,
     );
-    msg.retry({ delaySeconds });
+    msg.ack();
     return;
   }
 
@@ -212,11 +211,10 @@ export async function processJobMessage(
       fresh.status === "pending" &&
       !isQueueDeliveryDue(fresh, Date.now())
     ) {
-      const delaySeconds = secondsUntilDue(fresh, Date.now()) ?? 1;
       console.log(
-        `[consumer] job ${jobId} deferred ${delaySeconds}s after claim miss (scheduled retry)`,
+        `[consumer] job ${jobId} acking after claim miss (duplicate or early delivery; scheduled message will run when due)`,
       );
-      msg.retry({ delaySeconds });
+      msg.ack();
       return;
     }
     msg.ack();
@@ -414,6 +412,45 @@ export async function processDlqMessage(
     msg.ack();
     return;
   }
+
+  // A poison queue message can DLQ while the job row is still healthy (e.g. duplicate
+  // deliveries). Do not mark the job failed in that case; discard the message and
+  // re-enqueue only when no scheduled delivery is still expected.
+  if (existing.status === "running") {
+    console.warn(
+      `[dlq] discarding poison message for running job ${jobId}; recovery will handle stale running`,
+    );
+    msg.ack();
+    return;
+  }
+
+  if (existing.last_error == null) {
+    console.warn(
+      `[dlq] discarding poison message for healthy pending job ${jobId}; not marking failed`,
+    );
+    const nowMs = Date.now();
+    const expected = getExpectedNextRunAtMs(existing);
+    if (expected == null || expected <= nowMs) {
+      const delaySeconds = Math.max(1, existing.success_retry_delay_seconds);
+      await env.JOB_QUEUE.send({ jobId, customerId }, { delaySeconds });
+      console.log(
+        `[dlq] re-queued job ${jobId} after discarding poison message delaySeconds=${delaySeconds}`,
+      );
+    }
+    msg.ack();
+    return;
+  }
+
+  if (existing.error_attempts < existing.max_attempts) {
+    const delaySeconds = backoffSeconds(existing.error_attempts);
+    console.warn(
+      `[dlq] re-queuing error-path job ${jobId} after poison message delaySeconds=${delaySeconds} errorAttempts=${existing.error_attempts}/${existing.max_attempts}`,
+    );
+    await env.JOB_QUEUE.send({ jobId, customerId }, { delaySeconds });
+    msg.ack();
+    return;
+  }
+
   await markFailed(
     env.DB,
     jobId,

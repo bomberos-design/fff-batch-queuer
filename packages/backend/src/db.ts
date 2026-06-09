@@ -740,6 +740,9 @@ export async function markPendingForSuccessRetry(
 export interface RecoveredJobRow {
   id: string;
   customer_id: string;
+  last_error?: string | null;
+  error_attempts?: number;
+  success_retry_delay_seconds?: number;
 }
 
 /**
@@ -812,6 +815,12 @@ export async function recoverStalePendingJobs(
          SELECT id
          FROM jobs
          WHERE status = 'pending'
+           AND NOT (
+             attempts > 0
+             AND last_error IS NULL
+             AND next_run_at IS NOT NULL
+             AND next_run_at > ?
+           )
            AND (
              (attempts = 0 AND updated_at <= ?)
              OR (attempts > 0 AND last_error IS NULL AND (
@@ -825,9 +834,9 @@ export async function recoverStalePendingJobs(
          ORDER BY updated_at ASC
          LIMIT ?
        )
-      RETURNING id, customer_id`,
+      RETURNING id, customer_id, last_error, error_attempts, success_retry_delay_seconds`,
     )
-    .bind(ts, initialCutoff, successPathCutoff, successPathCutoff, errorPathCutoff, safeLimit)
+    .bind(ts, nowMs, initialCutoff, successPathCutoff, successPathCutoff, errorPathCutoff, safeLimit)
     .all<RecoveredJobRow>();
   return result.results ?? [];
 }

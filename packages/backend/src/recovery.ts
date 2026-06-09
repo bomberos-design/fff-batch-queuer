@@ -1,3 +1,4 @@
+import { backoffSeconds } from "./backoff";
 import {
   listDuplicateActiveUrls,
   recoverStalePendingJobs,
@@ -72,7 +73,14 @@ export async function recoverOrphanedRunningJobs(
         `[recovery] re-queued ${recoveredPending.length} stale pending job(s) (lost/delayed queue delivery)`,
       );
       for (const row of recoveredPending) {
-        await env.JOB_QUEUE.send({ jobId: row.id, customerId: row.customer_id });
+        const isErrorRetry = Boolean(row.last_error);
+        const delaySeconds = isErrorRetry
+          ? backoffSeconds(row.error_attempts ?? 1)
+          : Math.max(1, row.success_retry_delay_seconds ?? 1);
+        await env.JOB_QUEUE.send(
+          { jobId: row.id, customerId: row.customer_id },
+          { delaySeconds },
+        );
       }
     }
   })()

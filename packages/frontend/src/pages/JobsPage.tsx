@@ -10,6 +10,7 @@ import {
   NumberInput,
   Pagination,
   Select,
+  Stack,
   Table,
   TextInput,
   Textarea,
@@ -514,9 +515,16 @@ export function JobsPage() {
                         <Table.Td>{job.name}</Table.Td>
                         <Table.Td>{job.customerName}</Table.Td>
                         <Table.Td>
-                          <Badge color={getStatusColor(job.status)} variant="light">
-                            {job.status}
-                          </Badge>
+                          <Stack gap={4}>
+                            <Badge color={getStatusColor(job.status)} variant="light">
+                              {job.status}
+                            </Badge>
+                            {job.status === "failed" && job.lastError ? (
+                              <Text size="xs" c="red" lineClamp={2} title={job.lastError}>
+                                {job.lastError}
+                              </Text>
+                            ) : null}
+                          </Stack>
                         </Table.Td>
                         <Table.Td>
                           {nextRunAt == null ? (
